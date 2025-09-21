@@ -1,0 +1,93 @@
+name: DHARMA Data Sync
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 */12 * * *"  # every 12 hours at :23
+
+jobs:
+  fetch-and-archive:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install kaggle pandas huggingface_hub
+
+      - name: Configure Kaggle
+        env:
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+          KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+        run: |
+          mkdir -p ~/.kaggle
+          printf '{"username":"%s","key":"%s"}' "$KAGGLE_USERNAME" "$KAGGLE_KEY" > ~/.kaggle/kaggle.json
+          chmod 600 ~/.kaggle/kaggle.json
+
+      - name: Download Emirates Draw dataset
+        run: |
+          mkdir -p data/input
+          kaggle datasets download -d akshay0070/draw-set -p data/input --force
+          ls -lh data/input
+
+      - name: Unzip if needed
+        run: |
+          f=$(ls data/input/*.zip 2>/dev/null || true)
+          if [ -n "$f" ]; then unzip -o "$f" -d data/input; fi
+          ls -lh data/input
+
+      - name: Create run manifest
+        run: |
+          python - << 'PY'
+          import json, os, time, glob
+          files = sorted(glob.glob("data/input/*"))
+          manifest = {
+              "run_ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+              "files": files,
+          }
+          os.makedirs("artifacts", exist_ok=True)
+          with open("artifacts/manifest.json","w") as f: json.dump(manifest, f, indent=2)
+          print("Wrote artifacts/manifest.json")
+          PY
+
+      - name: Upload artifact (for debugging and downstream jobs)
+        uses: actions/upload-artifact@v4
+        with:
+          name: dharma-input
+          path: |
+            data/input/**
+            artifacts/manifest.json
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Optional push manifest to Hugging Face (requires token)
+        if: ${{ secrets.HUGGINGFACE_TOKEN != '' }}
+        env:
+          HUGGINGFACE_TOKEN: ${{ secrets.HUGGINGFACE_TOKEN }}
+        run: |
+          python - << 'PY'
+          import os, json, tempfile, shutil
+          from huggingface_hub import HfApi, create_repo, upload_file
+          api = HfApi(token=os.environ["HUGGINGFACE_TOKEN"])
+          repo_id = "shastranew-glitch/dharma-manifests"
+          try:
+              create_repo(repo_id=repo_id, repo_type="dataset", private=False, exist_ok=True, token=os.environ["HUGGINGFACE_TOKEN"])
+          except Exception as e:
+              print("Repo create/check:", e)
+          upload_file(
+              path_or_fileobj="artifacts/manifest.json",
+              path_in_repo="manifests/latest.json",
+              repo_id=repo_id,
+              repo_type="dataset",
+              token=os.environ["HUGGINGFACE_TOKEN"]
+          )
+          print("Pushed manifest to HF dataset:", repo_id)
+          PY
