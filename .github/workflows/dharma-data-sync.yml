@@ -13,6 +13,78 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  preprocess-and-summarize:
+    needs: fetch-and-archive
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Download input artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dharma-input
+          path: workdir
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas
+
+      - name: Build dataset summary
+        run: |
+          python - <<'PY'
+          import os, json, glob, hashlib, time
+          import pandas as pd
+
+          base = "workdir/data/input"
+          files = sorted(glob.glob(os.path.join(base, "*")))
+          def sha256(p):
+              h = hashlib.sha256()
+              with open(p, "rb") as f:
+                  for chunk in iter(lambda: f.read(1<<20), b""): h.update(chunk)
+              return h.hexdigest()
+
+          rows = []
+          for p in files:
+              if os.path.isfile(p):
+                  rows.append({
+                      "file": os.path.basename(p),
+                      "size_bytes": os.path.getsize(p),
+                      "sha256": sha256(p)
+                  })
+          df = pd.DataFrame(rows).sort_values("file")
+          os.makedirs("reports", exist_ok=True)
+          df.to_csv("reports/dataset_summary.csv", index=False)
+          meta = {
+              "generated_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+              "file_count": len(df),
+              "total_size_bytes": int(df["size_bytes"].sum()) if len(df) else 0
+          }
+          with open("reports/dataset_summary.json", "w") as f:
+              json.dump(meta, f, indent=2)
+          print("Wrote reports/dataset_summary.csv and .json")
+          PY
+
+      - name: Upload summary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dharma-summary
+          path: |
+            reports/dataset_summary.csv
+            reports/dataset_summary.json
+          retention-days: 14
+
+  
   fetch-and-archive:
     runs-on: ubuntu-latest
     defaults:
