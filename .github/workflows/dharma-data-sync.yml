@@ -84,6 +84,40 @@ jobs:
             reports/dataset_summary.json
           retention-days: 14
 
+      - name: Check HF token presence
+        id: hftoken2
+        run: |
+          if [ -n "${{ secrets.HUGGINGFACE_TOKEN }}" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Push summary to Hugging Face
+        if: ${{ steps.hftoken2.outputs.present == 'true' }}
+        env:
+          HUGGINGFACE_TOKEN: ${{ secrets.HUGGINGFACE_TOKEN }}
+        run: |
+          python - <<'PY'
+          import os
+          from huggingface_hub import upload_file
+          token = os.environ["HUGGINGFACE_TOKEN"]
+          repo_id = "akshay1992pillai/dharma-manifests"
+          uploads = [
+              ("reports/dataset_summary.json", "summaries/latest.json"),
+              ("reports/dataset_summary.csv",  "summaries/latest.csv"),
+          ]
+          for local, remote in uploads:
+              upload_file(
+                  path_or_fileobj=local,
+                  path_in_repo=remote,
+                  repo_id=repo_id,
+                  repo_type="dataset",
+                  token=token
+              )
+          print("Uploaded summaries to HF:", repo_id)
+          PY
+
       - name: Commit summary to repo
         run: |
           git config user.name "github-actions"
