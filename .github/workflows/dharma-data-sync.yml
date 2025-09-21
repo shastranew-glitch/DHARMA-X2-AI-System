@@ -67,7 +67,7 @@ jobs:
       - name: Download Emirates Draw dataset
         run: |
           mkdir -p data/input
-          kaggle datasets download -d akshay0070/draw-set -p data/input --force
+          kaggle datasets download -d akshay1992pillai/draw-set -p data/input --force
           ls -lh data/input
 
       - name: Unzip if needed
@@ -90,7 +90,7 @@ jobs:
               return h.hexdigest()
           manifest = {
               "run_ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-              "dataset": "akshay0070/draw-set",
+              "dataset": "akshay1992pillai/draw-set",
               "files": [{"path": p, "sha256": sha256(p)} for p in files if os.path.isfile(p)]
           }
           os.makedirs("artifacts", exist_ok=True)
