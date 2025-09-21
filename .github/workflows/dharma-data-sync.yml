@@ -128,11 +128,19 @@ jobs:
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@users.noreply.github.com"
-          mkdir -p reports
-          cp -f reports/dataset_summary.* .
-          git add reports/dataset_summary.*
+      
+          # Ensure we are on main and up to date
+          git fetch origin main
+          git checkout main
+          git pull --rebase origin main
+      
+          # Stage and commit
+          git add reports/dataset_summary.csv reports/dataset_summary.json
           git commit -m "chore(reports): update dataset summary" || echo "No changes to commit"
-          git push
+      
+          # push with a single retry on non-fast-forward
+          git push origin HEAD:main || (git pull --rebase origin main && git push origin HEAD:main)
+
 
 
   
