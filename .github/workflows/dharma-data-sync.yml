@@ -131,31 +131,29 @@ jobs:
           set -e
           git config user.name "github-actions"
           git config user.email "github-actions@users.noreply.github.com"
+          git config pull.rebase true
+          git config rebase.autoStash true
       
-          # Ensure branch and remote are current
           git fetch origin main
           git checkout main
       
-          # Stash any local changes before rebasing
+          # stage + stash any local changes to allow rebase
           git add -A
           git stash push -m "ci-stash" || true
       
-          # Rebase onto latest main
+          # rebase onto latest main with autostash safety
           git pull --rebase origin main
       
-          # Restore stashed changes (if any)
-          if git stash list | grep -q "ci-stash"; then
-            git stash pop
-          fi
+          # restore stashed changes (if any)
+          git stash pop || true
       
-          # Stage only the intended files
+          # commit only the intended files
           git add reports/dataset_summary.csv reports/dataset_summary.json
-      
-          # Commit (no-op if unchanged)
           git commit -m "chore(reports): update dataset summary" || echo "No changes to commit"
       
-          # Push with single retry
+          # push with a single rebase retry
           git push origin HEAD:main || (git pull --rebase origin main && git push origin HEAD:main)
+
 
 
 
