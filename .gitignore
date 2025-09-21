@@ -52,3 +52,8 @@ models/
 # Operating System
 .DS_Store
 Thumbs.db
+
+# reports/ might be ignored here or via *.csv / *.json
+!reports/
+!reports/dataset_summary.csv
+!reports/dataset_summary.json
