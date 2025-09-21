@@ -5,9 +5,23 @@ on:
   schedule:
     - cron: "23 */12 * * *"  # every 12 hours at :23
 
+permissions:
+  contents: read  # minimal permissions
+
+concurrency:
+  group: dharma-data-sync-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   fetch-and-archive:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    env:
+      TZ: UTC
+      PYTHONUNBUFFERED: "1"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
 
     steps:
       - name: Checkout
@@ -17,13 +31,25 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: "pip"
 
       - name: Install deps
         run: |
           python -m pip install --upgrade pip
           pip install kaggle pandas huggingface_hub
 
+      # --- Kaggle section ----------------------------------------------------
+      - name: Verify Kaggle secrets
+        id: kaggle
+        run: |
+          if [[ -z "${{ secrets.KAGGLE_USERNAME }}" || -z "${{ secrets.KAGGLE_KEY }}" ]]; then
+            echo "missing=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "missing=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Configure Kaggle
+        if: ${{ steps.kaggle.outputs.missing == 'false' }}
         env:
           KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
           KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
@@ -31,6 +57,12 @@ jobs:
           mkdir -p ~/.kaggle
           printf '{"username":"%s","key":"%s"}' "$KAGGLE_USERNAME" "$KAGGLE_KEY" > ~/.kaggle/kaggle.json
           chmod 600 ~/.kaggle/kaggle.json
+
+      - name: Fail if Kaggle secrets missing
+        if: ${{ steps.kaggle.outputs.missing == 'true' }}
+        run: |
+          echo "Kaggle secrets missing (KAGGLE_USERNAME/KAGGLE_KEY). Add them in Repo Settings → Secrets → Actions." >&2
+          exit 1
 
       - name: Download Emirates Draw dataset
         run: |
@@ -40,25 +72,34 @@ jobs:
 
       - name: Unzip if needed
         run: |
-          f=$(ls data/input/*.zip 2>/dev/null || true)
-          if [ -n "$f" ]; then unzip -o "$f" -d data/input; fi
+          zipfile=$(ls data/input/*.zip 2>/dev/null || true)
+          if [ -n "$zipfile" ]; then unzip -o "$zipfile" -d data/input; fi
           ls -lh data/input
 
+      # --- Manifest & artifact -----------------------------------------------
       - name: Create run manifest
         run: |
-          python - << 'PY'
-          import json, os, time, glob
+          python - <<'PY'
+          import os, time, json, glob, hashlib
           files = sorted(glob.glob("data/input/*"))
+          def sha256(path):
+              h = hashlib.sha256()
+              with open(path, "rb") as f:
+                  for chunk in iter(lambda: f.read(1<<20), b""):
+                      h.update(chunk)
+              return h.hexdigest()
           manifest = {
               "run_ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-              "files": files,
+              "dataset": "akshay0070/draw-set",
+              "files": [{"path": p, "sha256": sha256(p)} for p in files if os.path.isfile(p)]
           }
           os.makedirs("artifacts", exist_ok=True)
-          with open("artifacts/manifest.json","w") as f: json.dump(manifest, f, indent=2)
-          print("Wrote artifacts/manifest.json")
+          with open("artifacts/manifest.json","w") as f:
+              json.dump(manifest, f, indent=2)
+          print("Wrote artifacts/manifest.json with", len(manifest["files"]), "files")
           PY
 
-      - name: Upload artifact (for debugging and downstream jobs)
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: dharma-input
@@ -68,24 +109,36 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
-      - name: Optional push manifest to Hugging Face (requires token)
-        if: ${{ env.HUGGINGFACE_TOKEN != '' }}
+      # --- Optional Hugging Face push ----------------------------------------
+      - name: Check HF token presence
+        id: hftoken
+        run: |
+          if [ -n "${{ secrets.HUGGINGFACE_TOKEN }}" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Push manifest to Hugging Face
+        if: ${{ steps.hftoken.outputs.present == 'true' }}
         env:
           HUGGINGFACE_TOKEN: ${{ secrets.HUGGINGFACE_TOKEN }}
         run: |
-          python - << 'PY'
-      import os, json
-      from huggingface_hub import HfApi, create_repo, upload_file
-      api = HfApi(token=os.environ["HUGGINGFACE_TOKEN"])
-      repo_id = "shastranew-glitch/dharma-manifests"
-      create_repo(repo_id=repo_id, repo_type="dataset", private=False, exist_ok=True, token=os.environ["HUGGINGFACE_TOKEN"])
-      upload_file(
-          path_or_fileobj="artifacts/manifest.json",
-          path_in_repo="manifests/latest.json",
-          repo_id=repo_id,
-          repo_type="dataset",
-          token=os.environ["HUGGINGFACE_TOKEN"]
-      )
-      print("Pushed manifest to HF dataset:", repo_id)
-      PY
-
+          python - <<'PY'
+          import os
+          from huggingface_hub import HfApi, create_repo, upload_file
+          token = os.environ["HUGGINGFACE_TOKEN"]
+          api = HfApi(token=token)
+          repo_id = "shastranew-glitch/dharma-manifests"  # change if you prefer
+          # Ensure dataset repo exists
+          create_repo(repo_id=repo_id, repo_type="dataset", private=False, exist_ok=True, token=token)
+          # Upload/overwrite latest manifest
+          upload_file(
+              path_or_fileobj="artifacts/manifest.json",
+              path_in_repo="manifests/latest.json",
+              repo_id=repo_id,
+              repo_type="dataset",
+              token=token
+          )
+          print("Pushed manifest to HF dataset:", repo_id)
+          PY
