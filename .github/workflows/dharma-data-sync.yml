@@ -12,9 +12,7 @@ on:
 permissions:
   contents: write  # minimal permissions
 
-concurrency:
-  group: dharma-data-sync-${{ github.ref }}
-  cancel-in-progress: true
+
 
 jobs:
   preprocess-and-summarize:
