@@ -1,5 +1,9 @@
 name: DHARMA Data Sync
 
+concurrency:
+  group: dharma-commit-${{ github.ref }}
+  cancel-in-progress: false
+
 on:
   workflow_dispatch:
   schedule:
@@ -126,6 +130,7 @@ jobs:
 
       - name: Commit summary to repo
         run: |
+          set -e
           git config user.name "github-actions"
           git config user.email "github-actions@users.noreply.github.com"
       
@@ -138,7 +143,7 @@ jobs:
           git add reports/dataset_summary.csv reports/dataset_summary.json
           git commit -m "chore(reports): update dataset summary" || echo "No changes to commit"
       
-          # push with a single retry on non-fast-forward
+          # Push with a single rebase-retry for safety
           git push origin HEAD:main || (git pull --rebase origin main && git push origin HEAD:main)
 
 
