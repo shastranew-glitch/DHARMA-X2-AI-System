@@ -6,7 +6,7 @@ on:
     - cron: "23 */12 * * *"  # every 12 hours at :23
 
 permissions:
-  contents: read  # minimal permissions
+  contents: write  # minimal permissions
 
 concurrency:
   group: dharma-data-sync-${{ github.ref }}
@@ -83,6 +83,17 @@ jobs:
             reports/dataset_summary.csv
             reports/dataset_summary.json
           retention-days: 14
+
+      - name: Commit summary to repo
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          mkdir -p reports
+          cp -f reports/dataset_summary.* .
+          git add reports/dataset_summary.*
+          git commit -m "chore(reports): update dataset summary" || echo "No changes to commit"
+          git push
+
 
   
   fetch-and-archive:
