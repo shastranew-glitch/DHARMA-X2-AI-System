@@ -137,22 +137,16 @@ jobs:
           git fetch origin main
           git checkout main
       
-          # stage + stash any local changes to allow rebase
-          git add -A
-          git stash push -m "ci-stash" || true
+          # Rebase with autostash to handle local changes
+          git pull --rebase --autostash origin main
       
-          # rebase onto latest main with autostash safety
-          git pull --rebase origin main
-      
-          # restore stashed changes (if any)
-          git stash pop || true
-      
-          # commit only the intended files
+          # Stage only the summary files
           git add reports/dataset_summary.csv reports/dataset_summary.json
+      
           git commit -m "chore(reports): update dataset summary" || echo "No changes to commit"
       
-          # push with a single rebase retry
-          git push origin HEAD:main || (git pull --rebase origin main && git push origin HEAD:main)
+          git push origin HEAD:main || (git pull --rebase --autostash origin main && git push origin HEAD:main)
+
 
 
 
